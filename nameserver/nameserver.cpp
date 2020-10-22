@@ -153,6 +153,8 @@ void dns(char* port, char* dns_method, string log, char* servers){
     int rv;
     ofstream fout;
     fout.open(log);
+    geographic g(servers);     
+    round_robin r(servers);
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -266,12 +268,10 @@ void dns(char* port, char* dns_method, string log, char* servers){
         string ip_respond;
         DNSRecord record;
         if (strcmp(dns_method, "--geo") == 0) {
-            geographic g(servers);            
             ip_respond = g.get_ip_addr(client_ip);
             cout << "go with geo!" << endl;
         }
         else {
-            round_robin r(servers);
             ip_respond = r.get_ip_addr();
             cout << "go with round robin" << endl;
         }
