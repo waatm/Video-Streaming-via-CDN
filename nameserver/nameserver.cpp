@@ -41,8 +41,8 @@ class round_robin {
 	int idx;
 
 public:
-    round_robin(char * file){
-        idx = 0;
+	void init(char * file) {
+		idx = 0;
 		string ip_addr;
 		ifstream fin;
 		fin.open(file);
@@ -53,7 +53,7 @@ public:
 		while (fin >> ip_addr) {
 			ip_addr_vector.push_back(ip_addr);
 		}
-    }
+	}
 
 	string get_ip_addr() {
 		string ip = ip_addr_vector[idx];
@@ -71,7 +71,7 @@ class geographic {
 	unordered_map<int, vector<pair<int, int>>> topology; //<id, <id, cost>>
 
 public:
-    geographic(char * file) {
+	void init(char * file) {
 		int num_nodes, num_links, host_id;
         int origin_id, dest_id, cost;
 		string ip, type, name;
@@ -155,7 +155,17 @@ int main(int argc, char *argv[]) {
         int rv;
         ofstream fout;
         fout.open(argv[4]);
+        // only preserve 1 instance of round_robin and geographic class
+        round_robin r;
+        geographic g;
 
+        if(strcmp(argv[1], "--geo") == 0){
+            //geographic
+            g.init(argv[3]);
+        }
+        else{
+            r.init(argv[3]);
+        }
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
@@ -214,17 +224,16 @@ int main(int argc, char *argv[]) {
                 s, sizeof(s));
             string client_ip (s);
             
-            uint32_t header_size_buffer;
-            //char header_size_buffer[4];
+            char header_size_buffer[4];
             memset(&header_size_buffer, 0, sizeof(header_size_buffer));
-            recved_byte = recv(new_fd, &header_size_buffer, 4, MSG_WAITALL);
+            recved_byte = recv(new_fd, header_size_buffer, 4, MSG_WAITALL);
             if (recved_byte < 0) {
                 cout << "Failed to receive header size." << endl;
                 exit(1);
             }
-            uint32_t size_header = ntohl(header_size_buffer);
-            cout << "received header size" << size_header << endl;
-            
+            cout << "received header size" << ntohl(*((int *) header_size_buffer)) << endl;
+
+            uint32_t size_header = ntohl(*((int *) header_size_buffer));
             char header_content_buffer[size_header+1];
             memset(&header_content_buffer, 0, sizeof(header_content_buffer));
             recved_byte = recv(new_fd, header_content_buffer, size_header, MSG_WAITALL);
@@ -236,16 +245,16 @@ int main(int argc, char *argv[]) {
             header_content_buffer[size_header] = '\0';
             cout << header_content_buffer << endl;
             
-            uint32_t question_size_buffer;
+            char question_size_buffer[4];
             memset(&question_size_buffer, 0, sizeof(question_size_buffer));
-            recved_byte = recv(new_fd, &question_size_buffer, 4, MSG_WAITALL);
+            recved_byte = recv(new_fd, question_size_buffer, 4, MSG_WAITALL);
             if (recved_byte < 0) {
                 cout << "Failed to receive question size." << endl;
                 exit(1);
             }
-            uint32_t size_question = ntohl(question_size_buffer);
-            cout << "received question size" << size_question << endl;
+            cout << "received question size" << ntohl(*((int *) question_size_buffer)) << endl;
 
+            uint32_t size_question = ntohl(*((int *) question_size_buffer));
             char question_content_buffer[size_question+1];
             memset(&question_content_buffer, 0, sizeof(question_content_buffer));
             recved_byte = recv(new_fd, question_content_buffer, size_question, MSG_WAITALL);
@@ -270,12 +279,10 @@ int main(int argc, char *argv[]) {
             string ip_respond;
             DNSRecord record;
             if (strcmp(argv[1], "--geo") == 0) {
-                geographic g(argv[3]);            
                 ip_respond = g.get_ip_addr(client_ip);
                 cout << "go with geo!" << endl;
             }
             else {
-                round_robin r(argv[3]);
                 ip_respond = r.get_ip_addr();
                 cout << "go with round robin" << endl;
             }
@@ -320,7 +327,7 @@ int main(int argc, char *argv[]) {
             if (send_dns_record < 0) {
                 cerr << "Error: failed to sent dns record size." << std::endl;
             }
-            cout << "record size sent!" << endl;
+            cout << size_record_h << " record size sent!" << endl;
             // sends DNS Record via encode
             send_dns_record = send(new_fd, DNSRecord::encode(record).c_str(), size_record_h, MSG_NOSIGNAL);
             if (send_dns_record < 0) {
@@ -333,6 +340,101 @@ int main(int argc, char *argv[]) {
         }
         fout.close();
         close(sockfd);
+        return 0;
+    }
+    else if(argc == 3){
+        int sockfd, numbytes;  
+        char buf[1000];
+        struct addrinfo hints, *servinfo, *p;
+        int rv;
+        char s[INET6_ADDRSTRLEN];
+
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+
+        if ((rv = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) {
+            fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+            return 1;
+        }
+
+        // loop through all the results and connect to the first we can
+        for(p = servinfo; p != NULL; p = p->ai_next) {
+            if ((sockfd = socket(p->ai_family, p->ai_socktype,
+                    p->ai_protocol)) == -1) {
+                perror("client: socket");
+                continue;
+            }
+
+            if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+                close(sockfd);
+                perror("client: connect");
+                continue;
+            }
+
+            break;
+        }
+
+        if (p == NULL) {
+            fprintf(stderr, "client: failed to connect\n");
+            return 2;
+        }
+        cout << "connected" << endl;
+        inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
+                s, sizeof s);
+        
+
+        freeaddrinfo(servinfo); // all done with this structure
+
+        DNSHeader header;
+        DNSQuestion question;
+        header.ID = 1;
+        header.QR = 0;
+        header.OPCODE = 1;
+        header.AA = 0;
+        header.TC = 0;
+        header.RD = 0;
+        header.RA = 0;
+        header.Z = 0;
+        header.RCODE = 0;
+        header.QDCOUNT = 1;
+        header.ANCOUNT = 0;
+        header.NSCOUNT = 0;
+        header.ARCOUNT = 0;
+        strcpy(question.QNAME, "video.cse.umich.edu");
+        question.QTYPE = 1;
+        question.QCLASS = 1;
+        
+        uint32_t size_dns_header = htonl(DNSHeader::encode(header).length());
+        ssize_t send_dns_header = send(sockfd, (char *) &size_dns_header, 4, MSG_NOSIGNAL);
+        if (send_dns_header < 0) {
+            cerr << "Error: failed to sent dns header size." << std::endl;
+        }
+        cout << "header size sent!" << size_dns_header << endl;
+        // sends DNS Header via encode
+        send_dns_header = send(sockfd, DNSHeader::encode(header).c_str(), size_dns_header, MSG_NOSIGNAL);
+        if (send_dns_header < 0) {
+            cerr << "Error: failed to sent dns header via encode." << std::endl;
+        }
+        cout << "header content sent!" << endl;
+        cout << DNSHeader::encode(header) << endl;
+        
+        uint32_t size_dns_question = htonl(DNSQuestion::encode(question).length());
+        ssize_t send_dns_question = send(sockfd, (char *) &size_dns_question, 4, MSG_NOSIGNAL);
+        if (send_dns_question < 0) {
+            cerr << "Error: failed to sent dns question size." << std::endl;
+        }
+        cout << "question size sent!" << size_dns_question << endl;
+        // sends DNS question via encode
+        send_dns_question = send(sockfd, DNSQuestion::encode(question).c_str(), size_dns_question, MSG_NOSIGNAL);
+        if (send_dns_question < 0) {
+            cerr << "Error: failed to sent dns question via encode." << std::endl;
+        }
+        cout << "question content sent!" << endl;
+        cout << DNSQuestion::encode(question) << endl;
+
+        close(sockfd);
+
         return 0;
     }
     else{
