@@ -36,69 +36,67 @@ struct comp_cost {
 	}
 };
 
-class round_robin {
-	vector<string> ip_addr_vector;
+class load_balancer{
+    vector<string> ip_addr_vector;
 	int idx;
+    vector<string> ip_vector;
+	vector<string> type_vector;
+	unordered_map<string, int> id_map; //[ip, host_id]
+	unordered_map<int, vector<pair<int, int>>> topology; //<id, <id, cost>>
 
 public:
-    round_robin(char * file){
-        idx = 0;
-		string ip_addr;
-		ifstream fin;
-		fin.open(file);
-		if (!fin.is_open()) {
-			cout << "fail to open file!" << endl;
-			exit(1);
-		}
-		while (fin >> ip_addr) {
-			ip_addr_vector.push_back(ip_addr);
-		}
+    load_balancer(char* dns_method, char * file){
+        if (strcmp(dns_method, "--rr") == 0) {
+            idx = 0;
+            string ip_addr;
+            ifstream fin;
+            fin.open(file);
+            if (!fin.is_open()) {
+                cout << "fail to open file!" << endl;
+                exit(1);
+            }
+            while (fin >> ip_addr) {
+                ip_addr_vector.push_back(ip_addr);
+            }
+        }
+        else {
+            int num_nodes, num_links, host_id;
+            int origin_id, dest_id, cost;
+            string ip, type, name;
+            ifstream fin;
+            fin.open(file);
+            if (!fin.is_open()) {
+                cout << "fail to open file!" << endl;
+                exit(1);
+            }
+            
+            fin >> name >> num_nodes;
+            for (int i = 0; i < num_nodes; i++) {
+                fin >> host_id >> type >> ip;
+                ip_vector.push_back(ip);
+                type_vector.push_back(type);
+                id_map[ip] = i;
+            }
+
+            fin >> name >> num_links;
+            for (int i = 0; i < num_links; i++) {
+                fin >> origin_id >> dest_id >> cost;
+                topology[origin_id].push_back(make_pair(dest_id, cost));
+                topology[dest_id].push_back(make_pair(origin_id, cost));
+            }
+        }
+        
     }
 
-	string get_ip_addr() {
+    string get_ip_addr_rr() {
 		string ip = ip_addr_vector[idx];
         int size = ip_addr_vector.size();
 		idx = (idx + 1) % size ;
         cout << "got ip thru rr " << ip << endl;
 		return ip;
 	}
-};
 
-class geographic {
-	vector<string> ip_vector;
-	vector<string> type_vector;
-	unordered_map<string, int> id_map; //[ip, host_id]
-	unordered_map<int, vector<pair<int, int>>> topology; //<id, <id, cost>>
-
-public:
-    geographic(char * file) {
-		int num_nodes, num_links, host_id;
-        int origin_id, dest_id, cost;
-		string ip, type, name;
-		ifstream fin;
-		fin.open(file);
-		if (!fin.is_open()) {
-			cout << "fail to open file!" << endl;
-			exit(1);
-		}
-		
-		fin >> name >> num_nodes;
-		for (int i = 0; i < num_nodes; i++) {
-			fin >> host_id >> type >> ip;
-			ip_vector.push_back(ip);
-			type_vector.push_back(type);
-			id_map[ip] = i;
-		}
-
-		fin >> name >> num_links;
-		for (int i = 0; i < num_links; i++) {
-			fin >> origin_id >> dest_id >> cost;
-			topology[origin_id].push_back(make_pair(dest_id, cost));
-			topology[dest_id].push_back(make_pair(origin_id, cost));
-		}
-	}
-
-	string get_ip_addr(string client_ip) {
+    string get_ip_addr_geo(string client_ip) {
         // given an ip, find the nearest server
         // used Dijkstra's algorithm to solve this problem
 		priority_queue<node, vector<node>, comp_cost> pq;
@@ -153,8 +151,7 @@ void dns(char* port, char* dns_method, string log, char* servers){
     int rv;
     ofstream fout;
     fout.open(log);
-    geographic g(servers);     
-    round_robin r(servers);
+    load_balancer lb(dns_method, servers);
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -268,11 +265,11 @@ void dns(char* port, char* dns_method, string log, char* servers){
         string ip_respond;
         DNSRecord record;
         if (strcmp(dns_method, "--geo") == 0) {
-            ip_respond = g.get_ip_addr(client_ip);
+            ip_respond = lb.get_ip_addr_geo(client_ip);
             cout << "go with geo!" << endl;
         }
         else {
-            ip_respond = r.get_ip_addr();
+            ip_respond = lb.get_ip_addr_rr();
             cout << "go with round robin" << endl;
         }
 
